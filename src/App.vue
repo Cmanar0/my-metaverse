@@ -4,6 +4,8 @@
     <div class="controls-panel">
       <h3>Controls</h3>
       <p>WASD - Move avatar</p>
+      <p>Shift + W - Sprint</p>
+      <p>Ctrl - Crouch</p>
       <p>Space - Jump</p>
       <p>Click on the scene - Enable continuous camera rotation</p>
       <p>Mouse - Rotate camera around avatar (unlimited rotation)</p>
@@ -17,7 +19,6 @@ import { ref, onMounted, onBeforeUnmount } from "vue";
 import { Scene } from "./core/Scene";
 import { Avatar } from "./core/Avatar";
 import { KeyboardControls } from "./controls/KeyboardControls";
-import * as THREE from "three";
 
 const canvas = ref<HTMLCanvasElement | null>(null);
 let scene: Scene | null = null;
@@ -38,7 +39,11 @@ const init = () => {
 
   // Create avatar
   avatar = new Avatar(scene.camera);
-  scene.scene.add(avatar.mesh);
+  scene.scene.add(avatar.getMesh());
+
+  // Add shadow and dust particles to the scene
+  scene.scene.add(avatar.getShadow());
+  scene.scene.add(avatar.getDustParticles());
 
   // Create keyboard controls
   keyboardControls = new KeyboardControls();
@@ -63,7 +68,7 @@ const init = () => {
       avatar.update(keyboardControls.getKeys(), deltaTime);
 
       // Update camera to follow avatar
-      scene.updateCamera(avatar.mesh.position);
+      scene.updateCamera(avatar.getMesh().position);
 
       // Render scene
       scene.render();
