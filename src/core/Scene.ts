@@ -1,6 +1,7 @@
 import * as THREE from "three";
 // @ts-ignore
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { Avatar } from "./Avatar";
 
 export class Scene {
   public scene: THREE.Scene;
@@ -97,6 +98,10 @@ export class Scene {
     const ground = new THREE.Mesh(groundGeometry, groundMaterial);
     ground.rotation.x = -Math.PI / 2; // Rotate to be horizontal
     ground.position.y = -0.5; // Position slightly below the origin
+
+    // Mark as terrain
+    (ground as any).isTerrain = true;
+
     this.scene.add(ground);
 
     return ground;
@@ -123,6 +128,27 @@ export class Scene {
     );
 
     return envObjects;
+  }
+
+  public registerCollidableObjects(avatar: Avatar): void {
+    // Register all environment objects as collidable, except terrain
+    this.scene.traverse((object) => {
+      if (
+        object instanceof THREE.Mesh &&
+        object !== avatar.getMesh() &&
+        !(object as any).isTerrain
+      ) {
+        if (this.debugMode) {
+          console.log(`Registering collidable object: ${object.uuid}`);
+          console.log(`Object is terrain: ${(object as any).isTerrain}`);
+        }
+        avatar.addCollidableObject(object);
+      } else if (this.debugMode && object instanceof THREE.Mesh) {
+        console.log(`Skipping object: ${object.uuid}`);
+        console.log(`Is terrain: ${(object as any).isTerrain}`);
+        console.log(`Is avatar: ${object === avatar.getMesh()}`);
+      }
+    });
   }
 
   public updateCamera(avatarPosition: THREE.Vector3): void {

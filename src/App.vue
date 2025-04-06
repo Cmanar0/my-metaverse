@@ -35,7 +35,7 @@ const init = () => {
   scene = new Scene(canvas.value);
   scene.addLighting();
   scene.addGround();
-  scene.addEnvironmentObjects();
+  const envObjects = scene.addEnvironmentObjects();
 
   // Create avatar
   avatar = new Avatar(scene.camera);
@@ -44,6 +44,9 @@ const init = () => {
   // Add shadow and dust particles to the scene
   scene.scene.add(avatar.getShadow());
   scene.scene.add(avatar.getDustParticles());
+
+  // Register collidable objects
+  scene.registerCollidableObjects(avatar);
 
   // Create keyboard controls
   keyboardControls = new KeyboardControls();
