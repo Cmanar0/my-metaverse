@@ -28,7 +28,7 @@ export class Avatar {
   private deceleration: number = 0.03; // For smooth deceleration
   private currentSpeed: number = 0; // Current movement speed
   private shadow: THREE.Mesh; // Shadow mesh
-  private debugMode: boolean = false;
+  private debugMode: boolean = true; // Changed to true to see animation logs
   // GLTF model properties
   private modelLoaded: boolean = false;
   private animationMixer: AnimationMixer | null = null;
@@ -42,6 +42,7 @@ export class Avatar {
   private animationChangeCooldown: number = 0.5; // Minimum time between animation changes
   private lastMovementTime: number = 0; // Track when movement was last detected
   private movementTimeout: number = 0.2; // Time before switching to idle after stopping
+  private mouseMovement: THREE.Vector2 = new THREE.Vector2();
 
   constructor(camera: THREE.Camera) {
     this.camera = camera;
@@ -72,6 +73,20 @@ export class Avatar {
       this.shadow = new THREE.Mesh(shadowGeometry, shadowMaterial);
       this.shadow.rotation.x = -Math.PI / 2;
       this.shadow.position.y = -0.49; // Position just above the ground plane (which is at -0.5)
+
+      // Set up mouse movement tracking - simplified version without debounce
+      document.addEventListener("mousemove", (event) => {
+        if (document.pointerLockElement) {
+          // Store the mouse movement
+          this.mouseMovement.x = event.movementX;
+          this.mouseMovement.y = event.movementY;
+
+          // Reset mouse movement after a short delay
+          setTimeout(() => {
+            this.mouseMovement.set(0, 0);
+          }, 100); // Reset after 100ms
+        }
+      });
 
       // Load the GLTF model
       this.loadGLTFModel();
@@ -130,6 +145,16 @@ export class Avatar {
           if (gltf.animations && gltf.animations.length > 0) {
             this.animationMixer = new THREE.AnimationMixer(model);
 
+            // Log all available animations
+            console.log("Available animations in the model:");
+            gltf.animations.forEach((clip, index) => {
+              console.log(
+                `[${index}] ${clip.name} - Duration: ${clip.duration.toFixed(
+                  2
+                )}s, Tracks: ${clip.tracks.length}`
+              );
+            });
+
             // Store all animations
             gltf.animations.forEach((clip) => {
               if (this.debugMode) {
@@ -148,6 +173,8 @@ export class Avatar {
               this.currentAnimation = Object.keys(this.animations)[0];
               this.animations[this.currentAnimation].play();
             }
+          } else {
+            console.warn("No animations found in the model");
           }
 
           this.modelLoaded = true;
@@ -269,29 +296,33 @@ export class Avatar {
           currentTime - this.lastAnimationChange;
         const timeSinceLastMovement = currentTime - this.lastMovementTime;
 
-        // Determine which animation to play based on movement
+        // Determine which animation to play based on movement and state
         let targetAnimation = "Idle";
 
-        if (this.isJumping) {
-          // No jump animation in this model, use "Walking" instead
+        if (this.velocity.lengthSq() > 0.01) {
+          // If moving, use walking animation
           targetAnimation = "Walking";
-        } else if (this.velocity.lengthSq() > 0.01) {
-          if (this.isSprinting) {
-            // No run animation in this model, use "Walking" with faster playback
-            targetAnimation = "Walking";
-          } else {
-            targetAnimation = "Walking";
-          }
+        } else if (this.isCrouching) {
+          // If crouching while stationary, use nervous looking animation
+          targetAnimation = "Nervously Look Around";
         } else if (timeSinceLastMovement < this.movementTimeout) {
           // Keep the walking animation for a short time after stopping
           targetAnimation = "Walking";
         }
 
         // Only change animation if enough time has passed since the last change
+        // and the target animation is different from the current one
         if (
           targetAnimation !== this.currentAnimation &&
           timeSinceLastAnimationChange > this.animationChangeCooldown
         ) {
+          // Log animation change if in debug mode
+          if (this.debugMode) {
+            console.log(
+              `Changing animation from ${this.currentAnimation} to ${targetAnimation}`
+            );
+          }
+
           // Fade out current animation
           if (this.animations[this.currentAnimation]) {
             this.animations[this.currentAnimation].fadeOut(
@@ -301,19 +332,38 @@ export class Avatar {
 
           // Fade in new animation
           if (this.animations[targetAnimation]) {
-            this.animations[targetAnimation]
-              .reset()
-              .fadeIn(this.animationTransitionTime)
-              .play();
+            const action = this.animations[targetAnimation];
+
+            // Configure animation based on type
+            if (targetAnimation === "Walking") {
+              // Speed up walking animation when sprinting
+              action.timeScale = this.isSprinting ? 1.5 : 1.0;
+            } else {
+              action.timeScale = 1.0;
+            }
+
+            // Play the animation with fade in
+            action.reset().fadeIn(this.animationTransitionTime).play();
 
             // Update current animation
             this.currentAnimation = targetAnimation;
             this.lastAnimationChange = currentTime;
 
             if (this.debugMode) {
-              console.log(`Animation changed to: ${targetAnimation}`);
+              console.log(
+                `Animation changed to: ${targetAnimation} ${
+                  this.isSprinting ? "(Sprinting)" : ""
+                }`
+              );
             }
           }
+        }
+
+        // Update animation speeds even if we haven't changed animations
+        if (this.currentAnimation === "Walking") {
+          this.animations[this.currentAnimation].timeScale = this.isSprinting
+            ? 1.5
+            : 1.0;
         }
       }
 
