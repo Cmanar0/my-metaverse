@@ -4,9 +4,7 @@ export class CollisionSystem {
   private objects: THREE.Mesh[] = [];
   private avatarRadius: number = 0.5; // Radius of the avatar's collision sphere
   private debugMode: boolean = true; // Enable debug logging
-  private collisionResponse: "stop" | "slide" | "bounce" = "bounce"; // How to respond to collisions
   private pushBackDistance: number = 0.2; // How far to push back when collision is detected
-  private bounceStrength: number = 0.8; // How strong the bounce back is (0-1)
 
   constructor() {}
 
@@ -38,13 +36,6 @@ export class CollisionSystem {
       if (this.debugMode) {
         console.log(`Removed collidable object: ${object.uuid}`);
       }
-    }
-  }
-
-  public setCollisionResponse(response: "stop" | "slide" | "bounce"): void {
-    this.collisionResponse = response;
-    if (this.debugMode) {
-      console.log(`Collision response set to: ${response}`);
     }
   }
 
@@ -111,8 +102,6 @@ export class CollisionSystem {
 
         if (this.debugMode) {
           console.log(`Collision detected with object: ${object.uuid}`);
-          console.log(`Object position:`, object.position);
-          console.log(`Avatar position:`, position);
         }
 
         // Calculate the closest point on the bounding box to the avatar
@@ -141,15 +130,14 @@ export class CollisionSystem {
               )
             );
 
-          // Bounce the velocity in the opposite direction
-          adjustedVelocity.copy(velocity).multiplyScalar(-this.bounceStrength);
+          // Stop the velocity
+          adjustedVelocity.set(0, 0, 0);
 
           if (this.debugMode) {
             console.log(
               `Avatar inside object, pushing out in direction:`,
               pushDirection
             );
-            console.log(`Bouncing velocity:`, adjustedVelocity);
           }
         } else {
           // Normalize the direction vector
@@ -169,50 +157,17 @@ export class CollisionSystem {
 
             if (this.debugMode) {
               console.log(`Adjusting position by:`, adjustment);
-              console.log(`New position:`, adjustedPosition);
             }
 
-            // Handle collision response based on the setting
-            if (this.collisionResponse === "stop") {
-              // Stop the velocity in the direction of the collision
-              const normalComponent = velocity.dot(direction);
-              if (normalComponent < 0) {
-                // Remove the component of velocity that's into the surface
-                adjustedVelocity.sub(direction.multiplyScalar(normalComponent));
-              }
-            } else if (this.collisionResponse === "slide") {
-              // Try to slide along the surface
-              this.slideAlongSurface(
-                adjustedPosition,
-                adjustedVelocity,
-                direction
-              );
-            } else if (this.collisionResponse === "bounce") {
-              // Bounce the velocity in the opposite direction
-              const normalComponent = velocity.dot(direction);
-              if (normalComponent < 0) {
-                // Reflect the velocity vector across the normal
-                const reflection = direction
-                  .clone()
-                  .multiplyScalar(2 * normalComponent);
-                adjustedVelocity.sub(reflection);
-
-                // Apply bounce strength
-                adjustedVelocity.multiplyScalar(this.bounceStrength);
-
-                if (this.debugMode) {
-                  console.log(`Bouncing velocity:`, adjustedVelocity);
-                }
-              }
+            // Stop the velocity in the direction of the collision
+            const normalComponent = velocity.dot(direction);
+            if (normalComponent < 0) {
+              // Remove the component of velocity that's into the surface
+              adjustedVelocity.sub(direction.multiplyScalar(normalComponent));
             }
           }
         }
       }
-    }
-
-    if (collisionDetected && this.debugMode) {
-      console.log(`Final adjusted position:`, adjustedPosition);
-      console.log(`Final adjusted velocity:`, adjustedVelocity);
     }
 
     return {
@@ -220,33 +175,5 @@ export class CollisionSystem {
       velocity: adjustedVelocity,
       collisionDetected,
     };
-  }
-
-  private slideAlongSurface(
-    position: THREE.Vector3,
-    velocity: THREE.Vector3,
-    normal: THREE.Vector3
-  ): void {
-    // Calculate the projection of velocity onto the normal
-    const dot = velocity.dot(normal);
-
-    // If the dot product is negative, the velocity is pointing into the surface
-    if (dot < 0) {
-      // Calculate the slide direction by removing the component of velocity that's into the surface
-      const slideDirection = velocity.clone().sub(normal.multiplyScalar(dot));
-
-      // If the slide direction is significant, apply it
-      if (slideDirection.lengthSq() > 0.0001) {
-        // Normalize and scale by a small amount to allow sliding
-        slideDirection.normalize().multiplyScalar(velocity.length() * 0.5);
-
-        // Apply the slide
-        position.add(slideDirection);
-
-        if (this.debugMode) {
-          console.log(`Sliding along surface by:`, slideDirection);
-        }
-      }
-    }
   }
 }

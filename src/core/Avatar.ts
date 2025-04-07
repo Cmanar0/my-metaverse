@@ -1,14 +1,18 @@
 import * as THREE from "three";
 import { CollisionSystem } from "./CollisionSystem";
+// @ts-ignore
+import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+// @ts-ignore
+import { AnimationMixer, AnimationAction } from "three";
 
 export class Avatar {
-  public mesh: THREE.Mesh;
+  public mesh: THREE.Group; // Changed from THREE.Mesh to THREE.Group to support GLTF models
   private moveSpeed: number = 0.1;
   private sprintSpeed: number = 0.2; // Faster speed when sprinting
-  private rotationSpeed: number = 0.05;
+  private rotationSpeed: number = 0.03; // Reduced from 0.05 to 0.03 for smoother rotation
   private jumpHeight: number = 1.5;
   private jumpDuration: number = 0.5;
-  private groundY: number = 1.0; // Increased from 0.5 to 1.0 to position avatar higher above ground
+  private groundY: number = 0.0; // Reduced from 1.0 to 0.0 to place avatar on the floor
   private velocity: THREE.Vector3 = new THREE.Vector3();
   private direction: THREE.Vector3 = new THREE.Vector3();
   private isJumping: boolean = false;
@@ -24,37 +28,39 @@ export class Avatar {
   private deceleration: number = 0.03; // For smooth deceleration
   private currentSpeed: number = 0; // Current movement speed
   private shadow: THREE.Mesh; // Shadow mesh
-  private dustParticles: THREE.Points; // Dust particles when moving
-  private particleSystem: THREE.BufferGeometry;
-  private particleMaterial: THREE.PointsMaterial;
-  private particlePositions: Float32Array;
-  private particleCount: number = 50;
   private collisionSystem: CollisionSystem;
-  // Bumping mechanics properties
-  private isBumping: boolean = false;
-  private bumpStartTime: number = 0;
-  private bumpDuration: number = 0.3; // Duration of bump effect in seconds
-  private bumpVelocity: THREE.Vector3 = new THREE.Vector3();
-  private controlsDisabled: boolean = false;
-  private controlsDisabledStartTime: number = 0;
-  private controlsDisabledDuration: number = 0.3; // Duration to disable controls in seconds
   private debugMode: boolean = false;
-  // Visual effects for bumping
-  private originalColor: THREE.Color = new THREE.Color(0x4169e1); // Default blue color
-  private bumpColor: THREE.Color = new THREE.Color(0xff0000); // Red color for bump effect
+  // GLTF model properties
+  private modelLoaded: boolean = false;
+  private animationMixer: AnimationMixer | null = null;
+  private animations: { [key: string]: AnimationAction } = {};
+  private currentAnimation: string = "Idle";
+  private modelScale: number = 0.02; // Reduced to 1/10 of previous size (0.2 to 0.02)
+  private modelPath: string = "/models/1940s_spy_animated_gltf/scene.gltf";
+  // Animation transition properties
+  private animationTransitionTime: number = 0.3; // Increased from 0.2 to 0.3 for smoother transitions
+  private lastAnimationChange: number = 0; // Track when animation was last changed
+  private animationChangeCooldown: number = 0.5; // Minimum time between animation changes
+  private lastMovementTime: number = 0; // Track when movement was last detected
+  private movementTimeout: number = 0.2; // Time before switching to idle after stopping
 
   constructor(camera: THREE.Camera) {
     this.camera = camera;
     this.collisionSystem = new CollisionSystem();
 
-    // Create avatar mesh with more detailed geometry
-    const geometry = new THREE.CapsuleGeometry(0.5, 1, 4, 8);
-    const material = new THREE.MeshStandardMaterial({
-      color: this.originalColor,
+    // Create a temporary mesh until the GLTF model is loaded
+    const tempGeometry = new THREE.CapsuleGeometry(0.5, 1, 4, 8);
+    const tempMaterial = new THREE.MeshStandardMaterial({
+      color: 0x4169e1,
       roughness: 0.7,
       metalness: 0.2,
     });
-    this.mesh = new THREE.Mesh(geometry, material);
+    const tempMesh = new THREE.Mesh(tempGeometry, tempMaterial);
+    tempMesh.position.y = this.groundY; // Position above ground
+
+    // Create a group to hold the mesh
+    this.mesh = new THREE.Group();
+    this.mesh.add(tempMesh);
     this.mesh.position.y = this.groundY; // Position above ground
 
     // Create shadow
@@ -68,160 +74,225 @@ export class Avatar {
     this.shadow.rotation.x = -Math.PI / 2;
     this.shadow.position.y = -0.49; // Position just above the ground plane (which is at -0.5)
 
-    // Create dust particles
-    this.particleSystem = new THREE.BufferGeometry();
-    this.particlePositions = new Float32Array(this.particleCount * 3);
-    this.particleMaterial = new THREE.PointsMaterial({
-      color: 0xcccccc,
-      size: 0.05,
-      transparent: true,
-      opacity: 0.5,
-      blending: THREE.AdditiveBlending,
-    });
+    // Load the GLTF model
+    this.loadGLTFModel();
+  }
 
-    // Initialize particle positions
-    for (let i = 0; i < this.particleCount; i++) {
-      this.particlePositions[i * 3] = 0;
-      this.particlePositions[i * 3 + 1] = 0;
-      this.particlePositions[i * 3 + 2] = 0;
-    }
+  private loadGLTFModel(): void {
+    const loader = new GLTFLoader();
 
-    this.particleSystem.setAttribute(
-      "position",
-      new THREE.BufferAttribute(this.particlePositions, 3)
+    loader.load(
+      this.modelPath,
+      (gltf) => {
+        if (this.debugMode) {
+          console.log("GLTF model loaded successfully", gltf);
+        }
+
+        // Remove the temporary mesh
+        while (this.mesh.children.length > 0) {
+          this.mesh.remove(this.mesh.children[0]);
+        }
+
+        // Add the loaded model to the mesh group
+        const model = gltf.scene;
+        model.scale.set(this.modelScale, this.modelScale, this.modelScale);
+
+        // Position the model to place it on the floor
+        // The 1940s spy model has its origin at the bottom of the feet
+        model.position.y = 0; // No need for additional offset as the model's origin is at the feet
+
+        this.mesh.add(model);
+
+        // Set up animations if available
+        if (gltf.animations && gltf.animations.length > 0) {
+          this.animationMixer = new THREE.AnimationMixer(model);
+
+          // Store all animations
+          gltf.animations.forEach((clip) => {
+            if (this.debugMode) {
+              console.log(`Animation loaded: ${clip.name}`);
+            }
+            this.animations[clip.name] = this.animationMixer!.clipAction(clip);
+          });
+
+          // Play the idle animation by default
+          if (this.animations["Idle"]) {
+            this.currentAnimation = "Idle";
+            this.animations["Idle"].play();
+          } else if (Object.keys(this.animations).length > 0) {
+            // If no idle animation, play the first available one
+            this.currentAnimation = Object.keys(this.animations)[0];
+            this.animations[this.currentAnimation].play();
+          }
+        }
+
+        this.modelLoaded = true;
+      },
+      (xhr) => {
+        if (this.debugMode) {
+          console.log(`${(xhr.loaded / xhr.total) * 100}% loaded`);
+        }
+      },
+      (error) => {
+        console.error("Error loading GLTF model:", error);
+      }
     );
-    this.dustParticles = new THREE.Points(
-      this.particleSystem,
-      this.particleMaterial
-    );
-    this.dustParticles.visible = false;
   }
 
   public update(keys: { [key: string]: boolean }, deltaTime: number): void {
-    // Check if controls are disabled due to bumping
-    if (this.controlsDisabled) {
-      const elapsed = performance.now() / 1000 - this.controlsDisabledStartTime;
-      if (elapsed >= this.controlsDisabledDuration) {
-        this.controlsDisabled = false;
-        if (this.debugMode) {
-          console.log("Controls re-enabled after bump");
-        }
+    // Update animation mixer if available
+    if (this.animationMixer) {
+      this.animationMixer.update(deltaTime);
+    }
+
+    // Reset velocity
+    this.velocity.set(0, 0, 0);
+
+    // Get camera direction
+    this.camera.getWorldDirection(this.direction);
+
+    // Calculate forward and right vectors
+    const forward = new THREE.Vector3(
+      this.direction.x,
+      0,
+      this.direction.z
+    ).normalize();
+    const right = new THREE.Vector3(forward.z, 0, -forward.x).normalize();
+
+    // Handle sprinting and crouching
+    this.isSprinting = keys["Shift"] && (keys["w"] || keys["W"]);
+    this.isCrouching = keys["Control"];
+
+    // Update avatar height based on crouching - only for temporary mesh
+    if (!this.modelLoaded && this.mesh.children[0] instanceof THREE.Mesh) {
+      const tempMesh = this.mesh.children[0] as THREE.Mesh;
+      if (this.isCrouching) {
+        tempMesh.scale.y = this.crouchHeight / this.normalHeight;
       } else {
-        // Skip keyboard input processing while controls are disabled
-        keys = {};
+        tempMesh.scale.y = 1.0;
       }
     }
 
-    // Check if we're in the middle of a bump
-    if (this.isBumping) {
-      const elapsed = performance.now() / 1000 - this.bumpStartTime;
-      if (elapsed >= this.bumpDuration) {
-        this.isBumping = false;
-        this.bumpVelocity.set(0, 0, 0);
+    // Calculate target rotation based on movement direction
+    if (keys["w"] || keys["a"] || keys["s"] || keys["d"]) {
+      // Calculate the angle between the avatar's current forward direction and the camera's forward direction
+      this.targetRotation = Math.atan2(forward.x, forward.z);
 
-        // Reset color
-        if (this.mesh.material instanceof THREE.MeshStandardMaterial) {
-          this.mesh.material.color.copy(this.originalColor);
+      // Update last movement time
+      this.lastMovementTime = performance.now() / 1000;
+    }
+
+    // Smoothly rotate the avatar towards the target rotation
+    const rotationDiff = this.targetRotation - this.currentRotation;
+
+    // Normalize the difference to be between -PI and PI
+    let normalizedDiff = rotationDiff;
+    while (normalizedDiff > Math.PI) normalizedDiff -= 2 * Math.PI;
+    while (normalizedDiff < -Math.PI) normalizedDiff += 2 * Math.PI;
+
+    // Apply rotation speed with smoother transition
+    if (Math.abs(normalizedDiff) > 0.01) {
+      // Use a smoother rotation curve
+      const rotationStep =
+        Math.sign(normalizedDiff) *
+        Math.min(Math.abs(normalizedDiff), this.rotationSpeed * deltaTime * 60);
+      this.currentRotation += rotationStep;
+
+      // Update the avatar's rotation
+      this.mesh.rotation.y = this.currentRotation;
+    }
+
+    // Determine target speed based on movement keys and sprinting
+    let targetSpeed = 0;
+    if (keys["w"] || keys["s"] || keys["a"] || keys["d"]) {
+      targetSpeed = this.isSprinting ? this.sprintSpeed : this.moveSpeed;
+    }
+
+    // Smoothly adjust current speed (acceleration/deceleration)
+    if (this.currentSpeed < targetSpeed) {
+      this.currentSpeed += this.acceleration * deltaTime * 60;
+      if (this.currentSpeed > targetSpeed) this.currentSpeed = targetSpeed;
+    } else if (this.currentSpeed > targetSpeed) {
+      this.currentSpeed -= this.deceleration * deltaTime * 60;
+      if (this.currentSpeed < targetSpeed) this.currentSpeed = targetSpeed;
+    }
+
+    // Apply movement based on keys with current speed
+    if (keys["w"]) {
+      this.velocity.add(forward.multiplyScalar(this.currentSpeed));
+    }
+    if (keys["s"]) {
+      this.velocity.add(forward.multiplyScalar(-this.currentSpeed));
+    }
+    if (keys["a"]) {
+      this.velocity.add(right.multiplyScalar(this.currentSpeed));
+    }
+    if (keys["d"]) {
+      this.velocity.add(right.multiplyScalar(-this.currentSpeed));
+    }
+
+    // Update animations based on movement
+    if (this.modelLoaded && this.animationMixer) {
+      const currentTime = performance.now() / 1000;
+      const timeSinceLastAnimationChange =
+        currentTime - this.lastAnimationChange;
+      const timeSinceLastMovement = currentTime - this.lastMovementTime;
+
+      // Determine which animation to play based on movement
+      let targetAnimation = "Idle";
+
+      if (this.isJumping) {
+        // No jump animation in this model, use "Walking" instead
+        targetAnimation = "Walking";
+      } else if (this.velocity.lengthSq() > 0.01) {
+        if (this.isSprinting) {
+          // No run animation in this model, use "Walking" with faster playback
+          targetAnimation = "Walking";
+        } else {
+          targetAnimation = "Walking";
         }
+      } else if (timeSinceLastMovement < this.movementTimeout) {
+        // Keep the walking animation for a short time after stopping
+        targetAnimation = "Walking";
+      }
+
+      // Change animation if needed and cooldown has passed
+      if (
+        targetAnimation !== this.currentAnimation &&
+        this.animations[targetAnimation] &&
+        timeSinceLastAnimationChange > this.animationChangeCooldown
+      ) {
+        // Fade out current animation
+        if (this.animations[this.currentAnimation]) {
+          this.animations[this.currentAnimation].fadeOut(
+            this.animationTransitionTime
+          );
+        }
+
+        // Fade in new animation
+        this.animations[targetAnimation]
+          .reset()
+          .fadeIn(this.animationTransitionTime)
+          .play();
+
+        // If sprinting, play the walking animation faster
+        if (this.isSprinting && targetAnimation === "Walking") {
+          this.animations[targetAnimation].timeScale = 1.5;
+        } else {
+          this.animations[targetAnimation].timeScale = 1.0;
+        }
+
+        this.currentAnimation = targetAnimation;
+        this.lastAnimationChange = currentTime;
 
         if (this.debugMode) {
-          console.log("Bump effect ended");
+          console.log(`Changed animation to: ${targetAnimation}`);
         }
-      } else {
-        // Apply bump velocity
-        this.velocity.copy(this.bumpVelocity);
-
-        // Apply visual effect - flash red
-        if (this.mesh.material instanceof THREE.MeshStandardMaterial) {
-          this.mesh.material.color.copy(this.bumpColor);
-        }
-      }
-    } else {
-      // Reset velocity if not bumping
-      this.velocity.set(0, 0, 0);
-
-      // Get camera direction
-      this.camera.getWorldDirection(this.direction);
-
-      // Calculate forward and right vectors
-      const forward = new THREE.Vector3(
-        this.direction.x,
-        0,
-        this.direction.z
-      ).normalize();
-      const right = new THREE.Vector3(forward.z, 0, -forward.x).normalize();
-
-      // Handle sprinting and crouching
-      this.isSprinting = keys["Shift"] && (keys["w"] || keys["W"]);
-      this.isCrouching = keys["Control"];
-
-      // Update avatar height based on crouching
-      if (this.isCrouching) {
-        this.mesh.scale.y = this.crouchHeight / this.normalHeight;
-      } else {
-        this.mesh.scale.y = 1.0;
-      }
-
-      // Calculate target rotation based on movement direction
-      if (keys["w"] || keys["a"] || keys["s"] || keys["d"]) {
-        // Calculate the angle between the avatar's current forward direction and the camera's forward direction
-        this.targetRotation = Math.atan2(forward.x, forward.z);
-      }
-
-      // Smoothly rotate the avatar towards the target rotation
-      const rotationDiff = this.targetRotation - this.currentRotation;
-
-      // Normalize the difference to be between -PI and PI
-      let normalizedDiff = rotationDiff;
-      while (normalizedDiff > Math.PI) normalizedDiff -= 2 * Math.PI;
-      while (normalizedDiff < -Math.PI) normalizedDiff += 2 * Math.PI;
-
-      // Apply rotation speed
-      if (Math.abs(normalizedDiff) > 0.01) {
-        const rotationStep =
-          Math.sign(normalizedDiff) * this.rotationSpeed * deltaTime * 60;
-        this.currentRotation += rotationStep;
-
-        // Update the avatar's rotation
-        this.mesh.rotation.y = this.currentRotation;
-      }
-
-      // Determine target speed based on movement keys and sprinting
-      let targetSpeed = 0;
-      if (keys["w"] || keys["s"] || keys["a"] || keys["d"]) {
-        targetSpeed = this.isSprinting ? this.sprintSpeed : this.moveSpeed;
-      }
-
-      // Smoothly adjust current speed (acceleration/deceleration)
-      if (this.currentSpeed < targetSpeed) {
-        this.currentSpeed += this.acceleration * deltaTime * 60;
-        if (this.currentSpeed > targetSpeed) this.currentSpeed = targetSpeed;
-      } else if (this.currentSpeed > targetSpeed) {
-        this.currentSpeed -= this.deceleration * deltaTime * 60;
-        if (this.currentSpeed < targetSpeed) this.currentSpeed = targetSpeed;
-      }
-
-      // Apply movement based on keys with current speed
-      if (keys["w"]) {
-        this.velocity.add(forward.multiplyScalar(this.currentSpeed));
-      }
-      if (keys["s"]) {
-        this.velocity.add(forward.multiplyScalar(-this.currentSpeed));
-      }
-      if (keys["a"]) {
-        this.velocity.add(right.multiplyScalar(this.currentSpeed));
-      }
-      if (keys["d"]) {
-        this.velocity.add(right.multiplyScalar(-this.currentSpeed));
       }
     }
 
     // Handle jumping with improved physics
-    if (
-      (keys[" "] || keys["Space"]) &&
-      !this.isJumping &&
-      !this.controlsDisabled
-    ) {
+    if ((keys[" "] || keys["Space"]) && !this.isJumping) {
       this.isJumping = true;
       this.jumpStartTime = performance.now() / 1000; // Convert to seconds
     }
@@ -235,34 +306,9 @@ export class Avatar {
       this.velocity
     );
 
-    // Check if a collision was detected
-    if (collisionResult.collisionDetected) {
-      // Collision detected - start bumping
-      if (!this.isBumping && !this.controlsDisabled) {
-        this.isBumping = true;
-        this.bumpStartTime = performance.now() / 1000;
-
-        // Calculate bump velocity (opposite of current velocity)
-        this.bumpVelocity.copy(this.velocity).multiplyScalar(-1.5); // 1.5x the original velocity
-
-        // Disable controls
-        this.controlsDisabled = true;
-        this.controlsDisabledStartTime = performance.now() / 1000;
-
-        if (this.debugMode) {
-          console.log("Collision detected - starting bump effect");
-          console.log("Bump velocity:", this.bumpVelocity);
-        }
-      }
-    }
-
     // Update position and velocity with collision detection
     this.mesh.position.copy(collisionResult.position);
-
-    // Only update velocity if not bumping
-    if (!this.isBumping) {
-      this.velocity.copy(collisionResult.velocity);
-    }
+    this.velocity.copy(collisionResult.velocity);
 
     // Handle jump animation with improved physics
     if (this.isJumping) {
@@ -291,48 +337,14 @@ export class Avatar {
     // Update shadow position
     this.shadow.position.x = this.mesh.position.x;
     this.shadow.position.z = this.mesh.position.z;
-
-    // Update dust particles
-    this.updateDustParticles(deltaTime);
   }
 
-  private updateDustParticles(deltaTime: number): void {
-    // Only show particles when moving and not jumping
-    const isMoving = this.velocity.length() > 0.01;
-    this.dustParticles.visible = isMoving && !this.isJumping;
-
-    if (isMoving && !this.isJumping) {
-      // Update particle positions
-      for (let i = 0; i < this.particleCount; i++) {
-        // Random offset from avatar position
-        const offsetX = (Math.random() - 0.5) * 1.5;
-        const offsetZ = (Math.random() - 0.5) * 1.5;
-
-        this.particlePositions[i * 3] = this.mesh.position.x + offsetX;
-        this.particlePositions[i * 3 + 1] = -0.49; // Position just above the ground plane (which is at -0.5)
-        this.particlePositions[i * 3 + 2] = this.mesh.position.z + offsetZ;
-      }
-
-      this.particleSystem.attributes.position.needsUpdate = true;
-
-      // Fade particles based on movement speed
-      this.particleMaterial.opacity = Math.min(
-        0.7,
-        (this.currentSpeed / this.moveSpeed) * 0.5
-      );
-    }
-  }
-
-  public getMesh(): THREE.Mesh {
+  public getMesh(): THREE.Object3D {
     return this.mesh;
   }
 
   public getShadow(): THREE.Mesh {
     return this.shadow;
-  }
-
-  public getDustParticles(): THREE.Points {
-    return this.dustParticles;
   }
 
   public addCollidableObject(object: THREE.Mesh): void {

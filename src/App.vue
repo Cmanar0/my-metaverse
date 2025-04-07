@@ -1,134 +1,138 @@
 <template>
-  <div class="app-container">
+  <div class="app">
     <canvas ref="canvas"></canvas>
-    <div class="controls-panel">
-      <h3>Controls</h3>
-      <p>WASD - Move avatar</p>
-      <p>Shift + W - Sprint</p>
-      <p>Ctrl - Crouch</p>
+    <div class="controls-info">
+      <h2>Controls</h2>
+      <p>WASD - Move</p>
       <p>Space - Jump</p>
-      <p>Click on the scene - Enable continuous camera rotation</p>
-      <p>Mouse - Rotate camera around avatar (unlimited rotation)</p>
-      <p>ESC - Release mouse pointer</p>
+      <p>Shift - Run</p>
+      <p>Ctrl - Crouch</p>
+      <p>Mouse - Look around</p>
+      <p>Click - Lock mouse</p>
     </div>
   </div>
 </template>
 
-<script setup lang="ts">
-import { ref, onMounted, onBeforeUnmount } from "vue";
+<script lang="ts">
+import { defineComponent, onMounted, ref } from "vue";
 import { Scene } from "./core/Scene";
 import { Avatar } from "./core/Avatar";
 import { KeyboardControls } from "./controls/KeyboardControls";
+import { CollisionSystem } from "./core/CollisionSystem";
 
-const canvas = ref<HTMLCanvasElement | null>(null);
-let scene: Scene | null = null;
-let avatar: Avatar | null = null;
-let keyboardControls: KeyboardControls | null = null;
-let animationFrameId: number | null = null;
-let lastTime: number = performance.now();
+export default defineComponent({
+  name: "App",
+  setup() {
+    const canvas = ref<HTMLCanvasElement | null>(null);
+    let scene: Scene | null = null;
+    let avatar: Avatar | null = null;
+    let keyboardControls: KeyboardControls | null = null;
+    let collisionSystem: CollisionSystem | null = null;
+    let animationFrameId: number | null = null;
+    let lastTime: number = performance.now();
 
-// Initialize the scene, avatar, and controls
-const init = () => {
-  if (!canvas.value) return;
+    const init = () => {
+      if (!canvas.value) return;
 
-  // Create scene
-  scene = new Scene(canvas.value);
-  scene.addLighting();
-  scene.addGround();
-  const envObjects = scene.addEnvironmentObjects();
+      // Create scene
+      scene = new Scene(canvas.value);
+      scene.addLighting();
+      const ground = scene.addGround();
+      const envObjects = scene.addEnvironmentObjects();
 
-  // Create avatar
-  avatar = new Avatar(scene.camera);
-  scene.scene.add(avatar.getMesh());
+      // Create avatar with camera
+      avatar = new Avatar(scene.camera);
+      scene.scene.add(avatar.getMesh());
+      scene.scene.add(avatar.getShadow());
 
-  // Add shadow and dust particles to the scene
-  scene.scene.add(avatar.getShadow());
-  scene.scene.add(avatar.getDustParticles());
+      // Create keyboard controls
+      keyboardControls = new KeyboardControls();
 
-  // Register collidable objects
-  scene.registerCollidableObjects(avatar);
+      // Create collision system
+      collisionSystem = new CollisionSystem();
+      scene.registerCollidableObjects(avatar);
 
-  // Create keyboard controls
-  keyboardControls = new KeyboardControls();
+      // Handle window resize
+      const handleResize = () => {
+        if (scene) {
+          scene.resize();
+        }
+      };
+      window.addEventListener("resize", handleResize);
 
-  // Handle window resize
-  const handleResize = () => {
-    if (scene) {
-      scene.resize();
-    }
-  };
-  window.addEventListener("resize", handleResize);
+      // Animation loop
+      const animate = () => {
+        if (scene && avatar && keyboardControls && collisionSystem) {
+          // Calculate delta time
+          const currentTime = performance.now();
+          const deltaTime = (currentTime - lastTime) / 1000; // Convert to seconds
+          lastTime = currentTime;
 
-  // Animation loop
-  const animate = () => {
-    if (scene && avatar && keyboardControls) {
-      // Calculate delta time
-      const currentTime = performance.now();
-      const deltaTime = (currentTime - lastTime) / 1000; // Convert to seconds
-      lastTime = currentTime;
+          // Get keyboard state
+          const keys = keyboardControls.getKeys();
 
-      // Update avatar based on keyboard input
-      avatar.update(keyboardControls.getKeys(), deltaTime);
+          // Update avatar with keys and delta time
+          avatar.update(keys, deltaTime);
 
-      // Update camera to follow avatar
-      scene.updateCamera(avatar.getMesh().position);
+          // Update camera to follow avatar
+          scene.updateCamera(avatar.getMesh().position);
 
-      // Render scene
-      scene.render();
-    }
-    animationFrameId = requestAnimationFrame(animate);
-  };
-  animate();
+          // Check for collisions with environment objects
+          for (const obj of envObjects) {
+            avatar.addCollidableObject(obj);
+          }
 
-  // Clean up function
-  onBeforeUnmount(() => {
-    if (animationFrameId !== null) {
-      cancelAnimationFrame(animationFrameId);
-    }
-    window.removeEventListener("resize", handleResize);
-    if (keyboardControls) {
-      keyboardControls.cleanup();
-    }
-  });
-};
+          // Render scene
+          scene.render();
+        }
+        animationFrameId = requestAnimationFrame(animate);
+      };
+      animate();
+    };
 
-onMounted(() => {
-  init();
+    onMounted(() => {
+      init();
+    });
+
+    return {
+      canvas,
+    };
+  },
 });
 </script>
 
-<style scoped>
-.app-container {
-  position: relative;
+<style>
+.app {
   width: 100vw;
   height: 100vh;
   overflow: hidden;
+  position: relative;
 }
 
 canvas {
-  display: block;
   width: 100%;
   height: 100%;
+  display: block;
 }
 
-.controls-panel {
+.controls-info {
   position: absolute;
   top: 20px;
-  left: 20px;
+  right: 20px;
   background-color: rgba(0, 0, 0, 0.7);
   color: white;
   padding: 15px;
-  border-radius: 8px;
+  border-radius: 5px;
   font-family: Arial, sans-serif;
-  z-index: 10;
 }
 
-h3 {
-  margin-top: 0;
-  margin-bottom: 10px;
+.controls-info h2 {
+  margin: 0 0 10px 0;
+  font-size: 18px;
 }
 
-p {
+.controls-info p {
   margin: 5px 0;
+  font-size: 14px;
 }
 </style>
