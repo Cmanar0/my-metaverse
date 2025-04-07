@@ -10,6 +10,13 @@
       <p>Mouse - Look around</p>
       <p>Click - Lock mouse</p>
     </div>
+    <div v-if="webglError" class="webgl-error">
+      <h2>WebGL Error</h2>
+      <p>{{ webglErrorMessage }}</p>
+      <p>
+        Please try a different browser or enable WebGL in your current browser.
+      </p>
+    </div>
   </div>
 </template>
 
@@ -18,7 +25,6 @@ import { defineComponent, onMounted, ref } from "vue";
 import { Scene } from "./core/Scene";
 import { Avatar } from "./core/Avatar";
 import { KeyboardControls } from "./controls/KeyboardControls";
-import { CollisionSystem } from "./core/CollisionSystem";
 
 export default defineComponent({
   name: "App",
@@ -27,67 +33,94 @@ export default defineComponent({
     let scene: Scene | null = null;
     let avatar: Avatar | null = null;
     let keyboardControls: KeyboardControls | null = null;
-    let collisionSystem: CollisionSystem | null = null;
     let animationFrameId: number | null = null;
     let lastTime: number = performance.now();
+    const webglError = ref<boolean>(false);
+    const webglErrorMessage = ref<string>("");
 
     const init = () => {
       if (!canvas.value) return;
 
-      // Create scene
-      scene = new Scene(canvas.value);
-      scene.addLighting();
-      const ground = scene.addGround();
-      const envObjects = scene.addEnvironmentObjects();
+      try {
+        // Create scene
+        scene = new Scene(canvas.value);
+        scene.addLighting();
+        const ground = scene.addGround();
+        const envObjects = scene.addEnvironmentObjects();
 
-      // Create avatar with camera
-      avatar = new Avatar(scene.camera);
-      scene.scene.add(avatar.getMesh());
-      scene.scene.add(avatar.getShadow());
+        // Create avatar with camera
+        avatar = new Avatar(scene.camera);
+        scene.scene.add(avatar.getMesh());
+        scene.scene.add(avatar.getShadow());
 
-      // Create keyboard controls
-      keyboardControls = new KeyboardControls();
+        // Create keyboard controls
+        keyboardControls = new KeyboardControls();
 
-      // Create collision system
-      collisionSystem = new CollisionSystem();
-      scene.registerCollidableObjects(avatar);
-
-      // Handle window resize
-      const handleResize = () => {
-        if (scene) {
-          scene.resize();
-        }
-      };
-      window.addEventListener("resize", handleResize);
-
-      // Animation loop
-      const animate = () => {
-        if (scene && avatar && keyboardControls && collisionSystem) {
-          // Calculate delta time
-          const currentTime = performance.now();
-          const deltaTime = (currentTime - lastTime) / 1000; // Convert to seconds
-          lastTime = currentTime;
-
-          // Get keyboard state
-          const keys = keyboardControls.getKeys();
-
-          // Update avatar with keys and delta time
-          avatar.update(keys, deltaTime);
-
-          // Update camera to follow avatar
-          scene.updateCamera(avatar.getMesh().position);
-
-          // Check for collisions with environment objects
-          for (const obj of envObjects) {
-            avatar.addCollidableObject(obj);
+        // Handle window resize
+        const handleResize = () => {
+          if (scene) {
+            scene.resize();
           }
+        };
+        window.addEventListener("resize", handleResize);
 
-          // Render scene
-          scene.render();
+        // Animation loop
+        const animate = () => {
+          if (scene && avatar && keyboardControls) {
+            // Calculate delta time
+            const currentTime = performance.now();
+            const deltaTime = (currentTime - lastTime) / 1000; // Convert to seconds
+            lastTime = currentTime;
+
+            // Get keyboard state
+            const keys = keyboardControls.getKeys();
+
+            // Update avatar with keys and delta time
+            avatar.update(keys, deltaTime);
+
+            // Update camera to follow avatar
+            scene.updateCamera(avatar.getMesh().position);
+
+            // Render scene
+            scene.render();
+          }
+          animationFrameId = requestAnimationFrame(animate);
+        };
+        animate();
+      } catch (error) {
+        console.error("Error initializing 3D scene:", error);
+        webglError.value = true;
+        webglErrorMessage.value =
+          error instanceof Error ? error.message : String(error);
+
+        // Display error message on canvas
+        if (canvas.value) {
+          const ctx = canvas.value.getContext("2d");
+          if (ctx) {
+            ctx.fillStyle = "#000000";
+            ctx.fillRect(0, 0, canvas.value.width, canvas.value.height);
+            ctx.font = "24px Arial";
+            ctx.fillStyle = "#ffffff";
+            ctx.textAlign = "center";
+            ctx.fillText(
+              "WebGL is not supported in your browser",
+              canvas.value.width / 2,
+              canvas.value.height / 2 - 30
+            );
+            ctx.font = "16px Arial";
+            ctx.fillText(
+              "Please try a different browser or enable WebGL",
+              canvas.value.width / 2,
+              canvas.value.height / 2 + 10
+            );
+            ctx.fillText(
+              "Error: " + webglErrorMessage.value,
+              canvas.value.width / 2,
+              canvas.value.height / 2 + 40
+            );
+          }
         }
-        animationFrameId = requestAnimationFrame(animate);
-      };
-      animate();
+      }
     };
 
     onMounted(() => {
@@ -96,6 +129,8 @@ export default defineComponent({
 
     return {
       canvas,
+      webglError,
+      webglErrorMessage,
     };
   },
 });
@@ -134,5 +169,29 @@ canvas {
 .controls-info p {
   margin: 5px 0;
   font-size: 14px;
+}
+
+.webgl-error {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background-color: rgba(255, 0, 0, 0.8);
+  color: white;
+  padding: 20px;
+  border-radius: 5px;
+  text-align: center;
+  max-width: 80%;
+  z-index: 1000;
+}
+
+.webgl-error h2 {
+  margin: 0 0 10px 0;
+  font-size: 24px;
+}
+
+.webgl-error p {
+  margin: 5px 0;
+  font-size: 16px;
 }
 </style>

@@ -16,7 +16,7 @@ export class Scene {
   private mouseMovement: THREE.Vector2 = new THREE.Vector2(0, 0);
   private isPointerLocked: boolean = false;
   private cameraSmoothing: number = 0.1; // Lower values = smoother camera movement
-  private debugMode: boolean = true; // Enable debug logging
+  private debugMode: boolean = true;
 
   constructor(canvas: HTMLCanvasElement) {
     this.canvas = canvas;
@@ -34,18 +34,76 @@ export class Scene {
     );
     this.camera.position.set(5, 5, 5);
 
-    // Create renderer
-    this.renderer = new THREE.WebGLRenderer({
-      canvas: this.canvas,
-      antialias: true,
-    });
-    this.renderer.setSize(window.innerWidth, window.innerHeight);
-    this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    // Create renderer with fallback options
+    try {
+      // Try to create a WebGL renderer with more compatible settings
+      this.renderer = new THREE.WebGLRenderer({
+        canvas: this.canvas,
+        antialias: false, // Disable antialiasing for better performance
+        powerPreference: "default",
+        failIfMajorPerformanceCaveat: false,
+        precision: "lowp", // Use low precision for better compatibility
+        stencil: false,
+        depth: true,
+        alpha: false,
+      });
+
+      // Set up renderer
+      this.renderer.setSize(window.innerWidth, window.innerHeight);
+      this.renderer.shadowMap.enabled = true;
+      this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+      console.log("WebGL renderer created successfully");
+    } catch (error) {
+      console.error("Error creating WebGL renderer:", error);
+
+      // Display error message on canvas
+      const ctx = this.canvas.getContext("2d");
+      if (ctx) {
+        ctx.fillStyle = "#000000";
+        ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+        ctx.font = "24px Arial";
+        ctx.fillStyle = "#ffffff";
+        ctx.textAlign = "center";
+        ctx.fillText(
+          "WebGL is not supported in your browser",
+          this.canvas.width / 2,
+          this.canvas.height / 2 - 30
+        );
+        ctx.font = "16px Arial";
+        ctx.fillText(
+          "Please try a different browser or enable WebGL",
+          this.canvas.width / 2,
+          this.canvas.height / 2 + 10
+        );
+        ctx.fillText(
+          "Error: " + (error instanceof Error ? error.message : String(error)),
+          this.canvas.width / 2,
+          this.canvas.height / 2 + 40
+        );
+      }
+
+      // Create a dummy renderer to prevent errors
+      this.renderer = {
+        render: () => {},
+        setSize: () => {},
+        domElement: this.canvas,
+        capabilities: { isWebGL: false },
+      } as any;
+    }
 
     // Add orbit controls (we'll use these for reference but implement our own rotation)
-    this.controls = new OrbitControls(this.camera, this.renderer.domElement);
-    this.controls.enabled = false; // Disable orbit controls as we're implementing our own
+    try {
+      this.controls = new OrbitControls(this.camera, this.renderer.domElement);
+      this.controls.enabled = false; // Disable orbit controls as we're implementing our own
+    } catch (error) {
+      console.error("Error creating OrbitControls:", error);
+      // Create a dummy controls object
+      this.controls = {
+        enabled: false,
+        update: () => {},
+      } as any;
+    }
 
     // Add click event to request pointer lock
     this.canvas.addEventListener("click", () => {
@@ -126,11 +184,8 @@ export class Scene {
     ground.position.y = -0.5; // Position slightly below the origin
     ground.receiveShadow = true;
 
-    // Mark as terrain - this is crucial for collision detection
-    (ground as any).isTerrain = true;
-
     if (this.debugMode) {
-      console.log(`Ground created and marked as terrain: ${ground.uuid}`);
+      console.log(`Ground created: ${ground.uuid}`);
     }
 
     this.scene.add(ground);
@@ -261,27 +316,6 @@ export class Scene {
     return envObjects;
   }
 
-  public registerCollidableObjects(avatar: Avatar): void {
-    // Register all environment objects as collidable, except terrain
-    this.scene.traverse((object) => {
-      if (
-        object instanceof THREE.Mesh &&
-        object !== avatar.getMesh() &&
-        !(object as any).isTerrain
-      ) {
-        if (this.debugMode) {
-          console.log(`Registering collidable object: ${object.uuid}`);
-          console.log(`Object is terrain: ${(object as any).isTerrain}`);
-        }
-        avatar.addCollidableObject(object);
-      } else if (this.debugMode && object instanceof THREE.Mesh) {
-        console.log(`Skipping object: ${object.uuid}`);
-        console.log(`Is terrain: ${(object as any).isTerrain}`);
-        console.log(`Is avatar: ${object === avatar.getMesh()}`);
-      }
-    });
-  }
-
   public updateCamera(avatarPosition: THREE.Vector3): void {
     // Always center the camera on the avatar
     this.cameraLookAt.copy(avatarPosition);
@@ -362,6 +396,10 @@ export class Scene {
   }
 
   public render(): void {
-    this.renderer.render(this.scene, this.camera);
+    try {
+      this.renderer.render(this.scene, this.camera);
+    } catch (error) {
+      console.error("Error rendering scene:", error);
+    }
   }
 }
